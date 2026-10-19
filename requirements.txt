@@ -1,12 +1,41 @@
-tensorflow
-ultralytics
-streamlit
-numpy
-pandas
-Pillow
-opencv-python-headless
-scikit-learn
-matplotlib
-seaborn
-PyYAML
-pytest
+
+# Deep Learning - Classification
+tensorflow==2.19.1
+
+# Object Detection - YOLOv8
+ultralytics>=8.3,<9.0
+
+# Numerical Computing
+numpy>=1.26.4,<2.2
+pandas>=2.2,<3.0
+scipy>=1.13,<2.0
+
+# Image Processing
+Pillow>=10.4,<12.0
+opencv-python-headless==4.10.0.84
+albumentations>=1.4,<2.0
+
+# Machine Learning and Evaluation
+scikit-learn>=1.5,<2.0
+
+# Visualization
+matplotlib>=3.9,<4.0
+seaborn>=0.13,<1.0
+plotly>=5.24,<7.0
+
+# Dashboard
+streamlit>=1.40,<2.0
+
+# Configuration
+PyYAML>=6.0,<7.0
+
+# Jupyter Notebooks
+jupyterlab>=4.2,<5.0
+ipykernel>=6.29,<7.0
+
+# Progress Monitoring
+tqdm>=4.66,<5.0
+
+# Testing
+pytest>=8.3,<10.0
+pytest-cov>=6.0,<8.0

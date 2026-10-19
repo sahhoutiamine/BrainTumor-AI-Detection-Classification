@@ -1,0 +1,90 @@
+
+name: mri-deep-learning
+
+x-project-volumes: &project-volumes
+  - ./src:/app/src
+  - ./data:/app/data
+  - ./models:/app/models
+  - ./notebooks:/app/notebooks
+  - ./dashboard:/app/dashboard
+  - ./dags:/app/dags
+  - ./tests:/app/tests
+  - ./config:/app/config
+  - ./reports:/app/reports
+
+services:
+
+  workspace:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mri-deep-learning:latest
+    container_name: mri_workspace
+    working_dir: /app
+    volumes: *project-volumes
+    environment:
+      PYTHONPATH: /app
+      TF_CPP_MIN_LOG_LEVEL: "2"
+    ports:
+      - "127.0.0.1:8888:8888"
+    stdin_open: true
+    tty: true
+    command: ["sleep", "infinity"]
+    restart: unless-stopped
+    shm_size: "2gb"
+
+  streamlit:
+    image: mri-deep-learning:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mri_streamlit
+    working_dir: /app
+    volumes: *project-volumes
+    environment:
+      PYTHONPATH: /app
+      TF_CPP_MIN_LOG_LEVEL: "2"
+    ports:
+      - "127.0.0.1:8501:8501"
+    command:
+      - streamlit
+      - run
+      - dashboard/app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+      - --server.fileWatcherType=none
+    restart: unless-stopped
+    shm_size: "1gb"
+
+  airflow:
+    image: apache/airflow:3.1.7
+    container_name: mri_airflow
+    user: "${AIRFLOW_UID:-50000}:0"
+    working_dir: /opt/airflow
+    environment:
+      AIRFLOW_HOME: /opt/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/database/airflow.db
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: "admin:admin"
+      PYTHONPATH: /opt/airflow/project
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./src:/opt/airflow/project/src
+      - ./config:/opt/airflow/project/config
+      - ./data:/opt/airflow/project/data
+      - ./models:/opt/airflow/project/models
+      - ./reports:/opt/airflow/project/reports
+      - airflow_database:/opt/airflow/database
+    ports:
+      - "127.0.0.1:8080:8080"
+    command: standalone
+    restart: unless-stopped
+    shm_size: "1gb"
+
+volumes:
+  airflow_database:
