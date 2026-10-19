@@ -1,0 +1,2 @@
+# Install apache-airflow in its dedicated Docker image using the official
+# version-matched constraints file. Add only required provider packages here.

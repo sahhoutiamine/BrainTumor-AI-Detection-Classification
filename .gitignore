@@ -1,0 +1,43 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Do not commit medical image datasets or derived splits.
+data/raw/**
+data/processed/**
+!data/raw/.gitkeep
+!data/processed/classification/train/.gitkeep
+!data/processed/classification/val/.gitkeep
+!data/processed/classification/test/.gitkeep
+!data/processed/detection/images/train/.gitkeep
+!data/processed/detection/images/val/.gitkeep
+!data/processed/detection/images/test/.gitkeep
+!data/processed/detection/labels/train/.gitkeep
+!data/processed/detection/labels/val/.gitkeep
+!data/processed/detection/labels/test/.gitkeep
+
+# Models and experiment artifacts.
+models/**
+!models/classification/
+!models/detection/
+!models/classification/.gitkeep
+!models/detection/.gitkeep
+runs/
+wandb/
+reports/figures/**
+reports/metrics/**
+reports/predictions/**
+!reports/figures/.gitkeep
+!reports/metrics/.gitkeep
+!reports/predictions/.gitkeep
+
+# Airflow runtime files.
+airflow/logs/**
+!airflow/logs/.gitkeep
+airflow/airflow.db
+airflow/airflow.cfg
+airflow/webserver_config.py
