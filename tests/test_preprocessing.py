@@ -340,3 +340,4 @@ def test_missing_image(tmp_path):
         load_image(
             missing_path
         )
+
