@@ -11,6 +11,7 @@ pandas>=2.2,<3.0
 scipy>=1.13,<2.0
 
 # Image Processing
+ImageHash>=4.3,<5.0
 Pillow>=10.4,<12.0
 opencv-python-headless==4.10.0.84
 albumentations>=1.4,<2.0
