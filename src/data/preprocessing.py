@@ -1,587 +1,156 @@
 
 from pathlib import Path
-import argparse
-import math
 
+import albumentations as A
 import cv2
 import numpy as np
+import pandas as pd
 import tensorflow as tf
 
-from tensorflow.keras.applications.mobilenet_v2 import (
-    preprocess_input,
-)
-
-from src.data.augmentation import (
-    augment_classification_image,
-)
-
-
-# -------------------------------------
-# Configuration
-# -------------------------------------
-
-DATA_DIR = Path(
-    "data/processed/classification"
-)
-
-CLASS_NAMES = [
-    "Glioma",
-    "Meningioma",
-    "No Tumor",
-    "Pituitary",
-]
-
-IMAGE_SIZE = (224, 224)
-
+SEED = 42
+SIZE = (224, 224)
 BATCH_SIZE = 32
 
-RANDOM_STATE = 42
+tf.keras.utils.set_random_seed(SEED)
 
-IMAGE_EXTENSIONS = {
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".bmp",
-    ".webp",
-}
+augmentation = tf.keras.Sequential([
+    tf.keras.layers.RandomRotation(0.03),
+    tf.keras.layers.RandomTranslation(0.05, 0.05),
+    tf.keras.layers.RandomZoom(0.1),
+    tf.keras.layers.RandomContrast(0.1),
+])
 
 
-# -------------------------------------
-# Load a single image
-# -------------------------------------
+def lire_image(chemin, label):
+    """Read, resize and normalize an MRI."""
+    image = tf.io.read_file(chemin)
+    image = tf.io.decode_image(
+        image,
+        channels=3,
+        expand_animations=False
+    )
+    image.set_shape([None, None, 3])
+    image = tf.image.resize(image, SIZE)
+    image = tf.cast(image, tf.float32) / 255.0
+    return image, label
 
-def load_image(image_path):
-    """
-    Read an image using OpenCV.
 
-    Returns:
-        RGB image as NumPy array.
-    """
+def augmenter(image, label):
+    """Apply random changes only during training."""
+    image = augmentation(image, training=True)
+    image = tf.clip_by_value(image, 0.0, 1.0)
+    return image, label
 
-    image_path = Path(image_path)
 
-    image = cv2.imread(
-        str(image_path),
-        cv2.IMREAD_COLOR,
+def adapter_modele(image, label, modele):
+    """Use the right ImageNet preprocessing."""
+    if modele == "MobileNetV2":
+        image = image * 2.0 - 1.0
+
+    elif modele == "ResNet50":
+        image = tf.keras.applications.resnet50.preprocess_input(
+            image * 255.0
+        )
+
+    return image, label
+
+
+def charger_dataset(partie, modele="MobileNetV2"):
+    """Create a TensorFlow dataset from a CSV."""
+    df = pd.read_csv(f"data/processed/{partie}.csv")
+
+    ds = tf.data.Dataset.from_tensor_slices((
+        df["image"].values,
+        df["classe"].values.astype("int32")
+    ))
+
+    if partie == "train":
+        ds = ds.shuffle(
+            len(df),
+            seed=SEED
+        )
+
+    ds = ds.map(
+        lire_image,
+        num_parallel_calls=tf.data.AUTOTUNE
     )
 
+    if partie == "train":
+        ds = ds.map(
+            augmenter,
+            num_parallel_calls=tf.data.AUTOTUNE
+        )
+
+    ds = ds.map(
+        lambda x, y: adapter_modele(x, y, modele),
+        num_parallel_calls=tf.data.AUTOTUNE
+    )
+
+    return ds.batch(BATCH_SIZE).prefetch(
+        tf.data.AUTOTUNE
+    )
+
+
+def augmenter_detection(image_path, label_path):
+    """Augment an image and its YOLO bounding boxes."""
+    image = cv2.imread(str(image_path))
     if image is None:
-        raise ValueError(
-            f"Cannot read image: {image_path}"
+        raise ValueError(f"Image illisible: {image_path}")
+
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+    boites = []
+    classes = []
+
+    for ligne in Path(label_path).read_text().splitlines():
+        valeurs = ligne.split()
+        classes.append(int(valeurs[0]))
+        boites.append([float(v) for v in valeurs[1:]])
+
+    transformation = A.Compose(
+        [
+            A.ShiftScaleRotate(
+                shift_limit=0.05,
+                scale_limit=0.10,
+                rotate_limit=10,
+                border_mode=cv2.BORDER_CONSTANT,
+                p=0.8
+            ),
+            A.RandomBrightnessContrast(
+                brightness_limit=0.1,
+                contrast_limit=0.1,
+                p=0.5
+            ),
+        ],
+        bbox_params=A.BboxParams(
+            format="yolo",
+            label_fields=["classes"],
+            min_visibility=0.25
         )
-
-    image = cv2.cvtColor(
-        image,
-        cv2.COLOR_BGR2RGB,
     )
 
-    return image
-
-
-# -------------------------------------
-# Resize an image
-# -------------------------------------
-
-def resize_image(
-    image,
-    size=IMAGE_SIZE,
-):
-    """
-    Resize an image to the given
-    (width, height).
-    """
-
-    resized = cv2.resize(
-        image,
-        size,
-        interpolation=cv2.INTER_AREA,
-    )
-
-    return resized
-
-
-# -------------------------------------
-# Normalize an image
-# -------------------------------------
-
-def normalize_image(image):
-    """
-    Normalize an image for MobileNetV2.
-
-    Original values:
-        0 to 255
-
-    New values:
-        -1 to 1
-    """
-
-    image = image.astype(np.float32)
-
-    normalized = preprocess_input(image)
-
-    return normalized
-
-
-# -------------------------------------
-# Complete image preprocessing
-# -------------------------------------
-
-def preprocess_image(
-    image_path,
-    training=False,
-):
-    """
-    Preprocessing pipeline:
-
-    1. Read image
-    2. Resize image
-    3. Apply augmentation if training
-    4. Normalize for MobileNetV2
-
-    Returns:
-        Shape (224, 224, 3)
-        dtype float32
-    """
-
-    image = load_image(image_path)
-
-    image = resize_image(image)
-
-    if training:
-        image = augment_classification_image(
-            image
-        )
-
-    image = normalize_image(image)
-
-    return image
-
-
-# -------------------------------------
-# Discover classification images
-# -------------------------------------
-
-def get_image_paths(split):
-    """
-    Read images and labels from:
-
-    data/processed/classification/
-        train/
-        val/
-        test/
-
-    Each split must contain a folder
-    for every class.
-    """
-
-    if split not in {"train", "val", "test"}:
-        raise ValueError(
-            f"Unknown dataset split: {split}"
-        )
-
-    split_dir = DATA_DIR / split
-
-    if not split_dir.exists():
-        raise FileNotFoundError(
-            f"Dataset folder not found: {split_dir}"
-        )
-
-    image_paths = []
-    labels = []
-
-    for class_id, class_name in enumerate(
-        CLASS_NAMES
-    ):
-
-        class_dir = split_dir / class_name
-
-        if not class_dir.exists():
-            raise FileNotFoundError(
-                f"Class folder not found: {class_dir}"
-            )
-
-        for image_path in sorted(
-            class_dir.rglob("*")
-        ):
-
-            if not image_path.is_file():
-                continue
-
-            if (
-                image_path.suffix.lower()
-                not in IMAGE_EXTENSIONS
-            ):
-                continue
-
-            image_paths.append(image_path)
-            labels.append(class_id)
-
-    return image_paths, labels
-
-
-# -------------------------------------
-# Create a batch generator
-# -------------------------------------
-
-class MRIDataGenerator(tf.keras.utils.Sequence):
-    """
-    Loads MRI images in small batches.
-
-    Training:
-        Random augmentation + normalization
-
-    Validation / Test:
-        Normalization without augmentation
-    """
-
-    def __init__(
-        self,
-        image_paths,
-        labels,
-        batch_size=BATCH_SIZE,
-        training=False,
-        seed=RANDOM_STATE,
-        **kwargs,
-    ):
-
-        super().__init__(**kwargs)
-
-        if len(image_paths) != len(labels):
-            raise ValueError(
-                "Images and labels must have "
-                "the same length."
-            )
-
-        if not image_paths:
-            raise ValueError(
-                "The dataset is empty."
-            )
-
-        if batch_size <= 0:
-            raise ValueError(
-                "batch_size must be positive."
-            )
-
-        self.image_paths = list(image_paths)
-
-        self.labels = np.array(
-            labels,
-            dtype=np.int32,
-        )
-
-        self.batch_size = batch_size
-
-        self.training = training
-
-        self.rng = np.random.default_rng(
-            seed
-        )
-
-        self.indices = np.arange(
-            len(self.image_paths)
-        )
-
-        self.on_epoch_end()
-
-    def __len__(self):
-        """
-        Number of batches per epoch.
-        """
-
-        return math.ceil(
-            len(self.image_paths)
-            / self.batch_size
-        )
-
-    def __getitem__(self, index):
-        """
-        Return one batch:
-
-        X: (batch, 224, 224, 3)
-        y: (batch,)
-        """
-
-        start = index * self.batch_size
-
-        end = start + self.batch_size
-
-        batch_indices = self.indices[
-            start:end
-        ]
-
-        images = []
-        labels = []
-
-        for image_index in batch_indices:
-
-            image_path = self.image_paths[
-                image_index
-            ]
-
-            label = self.labels[
-                image_index
-            ]
-
-            image = preprocess_image(
-                image_path,
-                training=self.training,
-            )
-
-            images.append(image)
-
-            labels.append(label)
-
-        X = np.stack(
-            images
-        ).astype(np.float32)
-
-        y = np.array(
-            labels,
-            dtype=np.int32,
-        )
-
-        return X, y
-
-    def on_epoch_end(self):
-        """
-        Shuffle the training data after
-        every epoch.
-
-        Never shuffle validation/test.
-        """
-
-        if self.training:
-
-            self.rng.shuffle(
-                self.indices
-            )
-
-
-# -------------------------------------
-# Build the three datasets
-# -------------------------------------
-
-def create_datasets(
-    batch_size=BATCH_SIZE,
-):
-    """
-    Create:
-
-        train_generator
-        val_generator
-        test_generator
-    """
-
-    train_paths, train_labels = (
-        get_image_paths("train")
-    )
-
-    val_paths, val_labels = (
-        get_image_paths("val")
-    )
-
-    test_paths, test_labels = (
-        get_image_paths("test")
-    )
-
-    train_generator = MRIDataGenerator(
-        train_paths,
-        train_labels,
-        batch_size=batch_size,
-        training=True,
-    )
-
-    val_generator = MRIDataGenerator(
-        val_paths,
-        val_labels,
-        batch_size=batch_size,
-        training=False,
-    )
-
-    test_generator = MRIDataGenerator(
-        test_paths,
-        test_labels,
-        batch_size=batch_size,
-        training=False,
-    )
-
-    print("\nDataset information")
-    print("-" * 40)
-
-    print(
-        f"Training images: {len(train_paths)}"
-    )
-
-    print(
-        f"Validation images: {len(val_paths)}"
-    )
-
-    print(
-        f"Testing images: {len(test_paths)}"
-    )
-
-    print(
-        f"Training batches: {len(train_generator)}"
-    )
-
-    print(
-        f"Validation batches: {len(val_generator)}"
-    )
-
-    print(
-        f"Testing batches: {len(test_generator)}"
+    resultat = transformation(
+        image=image,
+        bboxes=boites,
+        classes=classes
     )
 
     return (
-        train_generator,
-        val_generator,
-        test_generator,
-    )
-
-
-# -------------------------------------
-# Inspect the first batch
-# -------------------------------------
-
-def inspect_batch(generator):
-    """
-    Inspect images, labels, shape
-    and normalization values.
-    """
-
-    X, y = generator[0]
-
-    print("\nFirst batch")
-    print("-" * 40)
-
-    print("Image shape:", X.shape)
-
-    print("Label shape:", y.shape)
-
-    print("Image dtype:", X.dtype)
-
-    print("Minimum pixel value:", X.min())
-
-    print("Maximum pixel value:", X.max())
-
-    print("Labels:", y.tolist())
-
-
-# -------------------------------------
-# Preview images from a batch
-# -------------------------------------
-
-def save_batch_preview(generator):
-    """
-    Save a preview of the first
-    six preprocessed images.
-    """
-
-    import matplotlib
-    matplotlib.use("Agg")
-
-    import matplotlib.pyplot as plt
-
-    X, y = generator[0]
-
-    num_images = min(6, len(X))
-
-    plt.figure(
-        figsize=(12, 7)
-    )
-
-    for i in range(num_images):
-
-        # Convert MobileNetV2 values
-        # from [-1, 1] back to [0, 1]
-        # for visualization.
-
-        image = (
-            X[i] + 1.0
-        ) / 2.0
-
-        image = np.clip(
-            image,
-            0.0,
-            1.0,
-        )
-
-        plt.subplot(
-            2,
-            3,
-            i + 1,
-        )
-
-        plt.imshow(image)
-
-        plt.title(
-            CLASS_NAMES[int(y[i])]
-        )
-
-        plt.axis("off")
-
-    output_dir = Path(
-        "reports/figures"
-    )
-
-    output_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    output_path = (
-        output_dir / "preprocessed_batch.png"
-    )
-
-    plt.tight_layout()
-
-    plt.savefig(
-        output_path,
-        dpi=150,
-    )
-
-    plt.close()
-
-    print(
-        f"\nBatch preview saved: {output_path}"
-    )
-
-
-# -------------------------------------
-# Execute preprocessing
-# -------------------------------------
-
-def main():
-
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=BATCH_SIZE,
-    )
-
-    args = parser.parse_args()
-
-    train, val, test = create_datasets(
-        batch_size=args.batch_size
-    )
-
-    print("\nTRAIN")
-    inspect_batch(train)
-
-    print("\nVALIDATION")
-    inspect_batch(val)
-
-    print("\nTEST")
-    inspect_batch(test)
-
-    save_batch_preview(train)
-
-    print(
-        "\nStep 2 preprocessing completed."
+        resultat["image"],
+        resultat["bboxes"],
+        resultat["classes"]
     )
 
 
 if __name__ == "__main__":
-    main()
+    for partie in ["train", "val", "test"]:
+        ds = charger_dataset(partie)
+        images, labels = next(iter(ds))
+
+        print(
+            partie,
+            "images:", images.shape,
+            "labels:", labels.shape,
+            "minimum:", float(tf.reduce_min(images)),
+            "maximum:", float(tf.reduce_max(images))
+        )
