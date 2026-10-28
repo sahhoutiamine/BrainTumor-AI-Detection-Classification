@@ -28,6 +28,7 @@ models/**
 !models/detection/.gitkeep
 runs/
 wandb/
+reports/
 reports/figures/**
 reports/metrics/**
 reports/predictions/**
