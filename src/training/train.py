@@ -223,7 +223,7 @@ def main():
 
     for nom, dropout, l2 in configurations:
         resultats.extend(
-            entrainer("MobileNetV2", nom, dropout, l2)
+            entrainer("ResNet50", nom, dropout, l2)
         )
 
     df = pd.DataFrame(resultats)
@@ -232,7 +232,21 @@ def main():
     print("\nComparaison des configurations :")
     print(df.to_string(index=False))
 
-    df.to_csv(RAPPORTS / "comparaison_step4.csv", index=False)
+    
+    fichier = RAPPORTS / "comparaison.csv"
+
+    if fichier.exists():
+        ancien = pd.read_csv(fichier)
+        df = pd.concat([ancien, df], ignore_index=True)
+
+        df = df.drop_duplicates(
+            subset=["modele", "configuration", "phase"],
+            keep="last"
+        )
+
+    df = df.sort_values("f1_macro", ascending=False)
+    df.to_csv(fichier, index=False)
+
 
     print("\nMeilleure configuration :")
     print(df.iloc[0].to_dict())
